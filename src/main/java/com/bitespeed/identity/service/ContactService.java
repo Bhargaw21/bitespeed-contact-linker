@@ -26,23 +26,35 @@ public class ContactService {
         String email = request.getEmail();
         String phoneNumber = request.getPhoneNumber();
 
-        // Fetch initial matching contacts by email or phone
+        // Step 1: Fetch initial matching contacts by email or phone
         List<Contact> matched = contactRepository.findByEmailOrPhoneNumber(email, phoneNumber);
         Set<Contact> allRelatedContacts = new HashSet<>(matched);
 
-        // BFS to find all linked contacts
+        // Step 2: BFS to find all linked contacts
+        // Step 2: Expand all linked contacts (BFS + upward traversal)
         Queue<Contact> queue = new LinkedList<>(matched);
         while (!queue.isEmpty()) {
             Contact current = queue.poll();
+
+            // Downward: get all secondaries linked to this contact
             List<Contact> linked = contactRepository.findByLinkedId(current.getId());
             for (Contact contact : linked) {
                 if (allRelatedContacts.add(contact)) {
                     queue.add(contact);
                 }
             }
+
+            // Upward: if current is secondary, traverse up to primary
+            if (current.getLinkedId() != null) {
+                Optional<Contact> parent = contactRepository.findById(current.getLinkedId());
+                if (parent.isPresent() && allRelatedContacts.add(parent.get())) {
+                    queue.add(parent.get());
+                }
+            }
         }
 
-        // Determine the primary contact (oldest primary)
+
+        // Step 3: Determine the primary contact (oldest primary)
         Contact primary = allRelatedContacts.stream()
                 .filter(c -> c.getLinkPrecedence() == LinkPrecedence.PRIMARY)
                 .min(Comparator.comparing(Contact::getCreatedAt))
@@ -61,7 +73,7 @@ public class ContactService {
             return mapToResponse(saved, List.of(saved));
         }
 
-        //Update all other primaries to secondary
+        // Step 4: Update all other primaries to secondary
         for (Contact c : allRelatedContacts) {
             if (!c.getId().equals(primary.getId()) && c.getLinkPrecedence() == LinkPrecedence.PRIMARY) {
                 c.setLinkPrecedence(LinkPrecedence.SECONDARY);
@@ -75,7 +87,7 @@ public class ContactService {
             }
         }
 
-        // Check if input is new (email/phone both not found)
+        // Step 5: Check if input is new (email/phone both not found)
         boolean emailExists = allRelatedContacts.stream().anyMatch(c -> email != null && email.equals(c.getEmail()));
         boolean phoneExists = allRelatedContacts.stream().anyMatch(c -> phoneNumber != null && phoneNumber.equals(c.getPhoneNumber()));
 
